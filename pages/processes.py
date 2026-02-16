@@ -381,7 +381,7 @@ with tab_access:
             ▼                        ▼
          DECLINED                 REVOKED
 
-          PENDING  ── {delete} ──►  (removed)""",
+        PENDING  ── {delete} ──►  (removed)""",
         language="text",
     )
 
