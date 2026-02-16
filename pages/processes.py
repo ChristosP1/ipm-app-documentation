@@ -311,7 +311,7 @@ with tab_analysis:
     _steps(
         [
             "Diarized transcript JSON files fetched from <b>Firebase Storage</b> "
-            "(<code>clients/{'<client_id>'}/teams/{'<team_id>'}/meetings/{'<meeting_id>'}/diarized_transcript*.json</code>).",
+            "(<code>clients/{<client_id>}/teams/{<team_id>}/meetings/{<meeting_id>}/diarized_transcript*.json</code>).",
             "Each JSON's segments parsed into <b>chat format</b>: <code>- Speaker Name: sentence</code>.",
             "Multiple JSON files are sorted by name and concatenated.",
             "Gemini runs <b>category analysis</b>: 8 team maturity categories scored 1 -- 4.",
