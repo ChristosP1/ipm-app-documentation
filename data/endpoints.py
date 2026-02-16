@@ -160,7 +160,7 @@ ACTOR_ENDPOINTS: dict[str, list[str]] = {
     ],
     "Facilitator": [
         "fac_create_meeting", "fac_list_meetings", "fac_get_meeting",
-        "fac_deactivate_meeting", "fac_transcribe", "fac_analyze",
+        "fac_deactivate_meeting", "fac_analyze",
         "fac_diarize", "fac_diarize_identify",
         "fac_confirm_speakers", "fac_assign_facilitator_speaker",
     ],
@@ -1115,44 +1115,6 @@ ENDPOINTS: list[dict[str, Any]] = [
         "path_params": [("meeting_id", "str", "Meeting document ID")],
         "query_params": [],
     },
-    # -- Transcription --
-    {
-        "id": "fac_transcribe",
-        "method": "POST",
-        "path": "/facilitator/meetings/{meeting_id}/transcribe",
-        "tag": "Facilitator Meeting Actions",
-        "subcategory": "Transcription",
-        "title": "Transcribe Meeting Audio",
-        "summary": "Uploads audio files, transcribes with Gemini, saves combined transcript.",
-        "auth": "X-Team-Session",
-        "complexity": "complex",
-        "source_file": "routers/facilitator.py",
-        "source_line": 340,
-        "description_long": (
-            "Accepts multiple audio files via multipart/form-data. Each file is validated "
-            "(type + size), uploaded to Firebase Storage, and transcribed using Google Gemini "
-            "with automatic language detection. Transcripts are concatenated in upload order "
-            "and saved to Storage. The meeting document is updated with total duration and "
-            "transcription_status=READY.\n\n"
-            "**Supported formats:** audio/mp4, audio/mpeg, audio/wav, audio/x-wav, audio/m4a, "
-            "audio/x-m4a, audio/webm\n"
-            "**Max file size:** 100MB per file"
-        ),
-        "request_body": [("audio_files", "list[UploadFile]", True, "Audio files to transcribe (multipart/form-data)")],
-        "response_fields": [
-            ("meeting_id", "str", "Meeting ID"),
-            ("transcription_status", "str", "READY or FAILED"),
-            ("transcript_text", "str | null", "Combined transcript text"),
-            ("audio_storage_paths", "list[str]", "Storage paths for uploaded files"),
-            ("transcript_storage_path", "str | null", "Path to saved transcript"),
-            ("total_duration", "str", "Combined duration (hh:mm:ss)"),
-            ("metadata", "list[TranscriptionMetadata]", "Per-file metadata (filename, size, type, duration)"),
-        ],
-        "response_status": 200,
-        "status_codes": {200: "Transcribed", 400: "Invalid audio type or too large", 401: "Invalid session", 403: "Team inactive", 404: "Meeting not found", 500: "Transcription failed"},
-        "path_params": [("meeting_id", "str", "Meeting document ID")],
-        "query_params": [],
-    },
     # -- Analysis --
     {
         "id": "fac_analyze",
@@ -1161,19 +1123,21 @@ ENDPOINTS: list[dict[str, Any]] = [
         "tag": "Facilitator Meeting Actions",
         "subcategory": "Analysis",
         "title": "Analyze Meeting Transcript",
-        "summary": "Runs AI analysis for team maturity (8 categories) and facilitator competencies (3).",
+        "summary": "Reads diarized transcript JSON, runs AI analysis for team maturity (8 categories) and facilitator competencies (3).",
         "auth": "X-Team-Session",
         "complexity": "complex",
         "source_file": "routers/facilitator.py",
-        "source_line": 447,
+        "source_line": 340,
         "description_long": (
-            "Fetches transcript files from Firebase Storage and runs Gemini AI analysis for:\n"
+            "Reads diarized transcript JSON files from Firebase Storage "
+            "(`clients/{client_id}/teams/{team_id}/meetings/{meeting_id}/diarized_transcript*.json`), "
+            "parses them into a chat-like format (`- Speaker Name: sentence`), and runs Gemini AI analysis for:\n"
             "- **8 team maturity categories** scored 1-4 (Initial/Developing/Established/Advanced) "
             "with explanation and suggestions\n"
             "- **3 most relevant facilitator competencies** selected from 25, each with assessment, "
             "priority (high/medium/low), and actionable feedback\n\n"
             "Results are stored in the meeting document's `categories` and `selected_competencies` fields. "
-            "Prerequisite: transcription must be completed first."
+            "Prerequisite: diarization must be completed first (either via `/diarize` or `/diarize-and-identify`)."
         ),
         "request_body": [],
         "response_fields": [
@@ -1184,7 +1148,7 @@ ENDPOINTS: list[dict[str, Any]] = [
             ("general_conclusion", "str", "Overall assessment (max 5 sentences)"),
         ],
         "response_status": 200,
-        "status_codes": {200: "Analyzed", 401: "Invalid session", 403: "Team inactive", 404: "No transcript found", 500: "Analysis failed"},
+        "status_codes": {200: "Analyzed", 401: "Invalid session", 403: "Team inactive", 404: "No diarized transcript found", 500: "Analysis failed"},
         "path_params": [("meeting_id", "str", "Meeting document ID")],
         "query_params": [],
     },

@@ -44,9 +44,8 @@ st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_transcription, tab_diarization, tab_recognition, tab_auth, tab_analysis, tab_access = st.tabs(
+tab_diarization, tab_recognition, tab_auth, tab_analysis, tab_access = st.tabs(
     [
-        "Transcription",
         "Diarization",
         "Speaker Recognition",
         "Authentication",
@@ -55,57 +54,7 @@ tab_transcription, tab_diarization, tab_recognition, tab_auth, tab_analysis, tab
     ]
 )
 
-# ===== TAB 1: Transcription =================================================
-with tab_transcription:
-    st.markdown('<div class="tag-header">Audio Transcription via Gemini</div>', unsafe_allow_html=True)
-    st.markdown(
-        "Multi-file audio transcription powered by **Google Gemini** with automatic "
-        "language detection. Facilitators upload one or more audio recordings; the "
-        "backend validates, stores, transcribes, and concatenates the results into a "
-        "single text file."
-    )
-
-    st.markdown("#### Pipeline Flow")
-    _steps(
-        [
-            "Facilitator uploads audio files (<code>multipart/form-data</code>).",
-            "Each file is validated: MIME type (<code>mp4 / mpeg / wav / m4a / webm</code>) + size check (max <b>100 MB</b>).",
-            "A <b>SHA-256</b>-based unique filename is generated per file.",
-            "Files are uploaded to <b>Firebase Storage</b>.",
-            "Each file is transcribed via <b>Gemini</b> with automatic language detection.",
-            "Transcripts are concatenated in upload order.",
-            "Combined transcript saved to Storage as a <code>.txt</code> file.",
-            "Meeting document updated: <code>transcription_status = READY</code>, duration summed across files.",
-        ]
-    )
-
-    st.markdown("#### Endpoint")
-    st.code("POST /facilitator/meetings/{meeting_id}/transcribe", language="http")
-
-    st.markdown("#### Supported Audio Formats")
-    st.markdown(
-        """
-| MIME Type | Extension |
-|-----------|-----------|
-| `audio/mp4` | .mp4 |
-| `audio/mpeg` | .mp3 |
-| `audio/wav` | .wav |
-| `audio/x-wav` | .wav |
-| `audio/m4a` | .m4a |
-| `audio/x-m4a` | .m4a |
-| `audio/webm` | .webm |
-"""
-    )
-
-    st.info("**Max file size:** 100 MB per file. Files exceeding this limit are rejected before upload.")
-
-    with st.expander("Source code reference"):
-        st.markdown(
-            "`services/ipm_app/transcription_service.py` -- contains the Gemini "
-            "transcription logic, file validation helpers, and Storage upload routines."
-        )
-
-# ===== TAB 2: Diarization ===================================================
+# ===== TAB 1: Diarization ===================================================
 with tab_diarization:
     st.markdown('<div class="tag-header">Speaker Diarization via WhisperX + pyannote</div>', unsafe_allow_html=True)
     st.markdown(
@@ -349,19 +298,22 @@ require_team_session           -- validates session JWT (X-Team-Session)
 """
         )
 
-# ===== TAB 5: Meeting Analysis ==============================================
+# ===== TAB 4: Meeting Analysis ==============================================
 with tab_analysis:
     st.markdown('<div class="tag-header">AI-Powered Meeting Analysis via Gemini</div>', unsafe_allow_html=True)
     st.markdown(
-        "Once a meeting is transcribed, the backend can run an **AI analysis** using "
-        "Google Gemini to score team maturity across eight categories and identify the "
-        "three most relevant facilitator competencies."
+        "Once a meeting has been **diarized** (via `/diarize` or `/diarize-and-identify`), "
+        "the backend can run an **AI analysis** using Google Gemini to score team maturity "
+        "across eight categories and identify the three most relevant facilitator competencies."
     )
 
     st.markdown("#### Pipeline Flow")
     _steps(
         [
-            "Transcript fetched from <b>Firebase Storage</b> (<code>.txt</code> files).",
+            "Diarized transcript JSON files fetched from <b>Firebase Storage</b> "
+            "(<code>clients/{'{'}cid{'}'}/teams/{'{'}tid{'}'}/meetings/{'{'}mid{'}'}/diarized_transcript*.json</code>).",
+            "Each JSON's segments parsed into <b>chat format</b>: <code>- Speaker Name: sentence</code>.",
+            "Multiple JSON files are sorted by name and concatenated.",
             "Gemini runs <b>category analysis</b>: 8 team maturity categories scored 1 -- 4.",
             "Gemini runs <b>competency analysis</b>: 3 most relevant facilitator competencies selected.",
             "Results stored in the meeting document in Firestore.",
@@ -396,8 +348,8 @@ with tab_analysis:
     )
 
     st.info(
-        "Both analysis passes use the same transcript but independent Gemini prompts "
-        "to keep category and competency evaluation decoupled."
+        "Both analysis passes use the same diarized transcript (formatted as a chat log) "
+        "but independent Gemini prompts to keep category and competency evaluation decoupled."
     )
 
     st.markdown("#### Endpoint")

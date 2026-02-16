@@ -47,7 +47,7 @@ with col1:
         '<div style="background:#F1F5F9;border-radius:8px;padding:16px;">'
         '<div style="font-weight:600;font-size:1rem;color:#0F172A;">All Endpoints</div>'
         '<div style="font-size:0.82rem;color:#64748B;margin-top:4px;">'
-        "Browse all 49 endpoints organized by category and sub-category.</div></div>",
+        "Browse all 48 endpoints organized by category and sub-category.</div></div>",
         unsafe_allow_html=True,
     )
     if st.button("Browse endpoints", icon=":material/list_alt:", key="nav_ep"):
