@@ -373,10 +373,11 @@ with tab_access:
     st.markdown("#### State Machine")
     st.code(
         """\
-                      accept
-          PENDING  ──────────►  ACCEPTED
+                      
+          PENDING ── accept ──► ACCEPTED
             │                      │
-            │ decline              │ revoke
+         decline                revoke                            
+            │                      │ 
             ▼                      ▼
          DECLINED               REVOKED
 
