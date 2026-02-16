@@ -1,0 +1,1488 @@
+"""Central endpoint data registry – single source of truth for all API documentation."""
+
+from __future__ import annotations
+
+from typing import Any
+
+# ---------------------------------------------------------------------------
+# Helper look-ups
+# ---------------------------------------------------------------------------
+
+def get_endpoint_by_id(endpoint_id: str) -> dict[str, Any] | None:
+    """Return the endpoint dict matching *endpoint_id*, or None."""
+    return _INDEX.get(endpoint_id)
+
+
+def get_endpoints_by_tag(tag: str) -> list[dict[str, Any]]:
+    """Return all endpoints whose tag matches *tag*."""
+    return [e for e in ENDPOINTS if e["tag"] == tag]
+
+
+def get_all_tags() -> list[str]:
+    """Return ordered unique tags."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for e in ENDPOINTS:
+        if e["tag"] not in seen:
+            seen.add(e["tag"])
+            result.append(e["tag"])
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Tag display order
+# ---------------------------------------------------------------------------
+TAG_ORDER = [
+    "IPM Admin Management",
+    "Client Admin Management",
+    "Facilitator Meeting Actions",
+    "team-auth",
+    "global-admin",
+    "health",
+    "dev",
+]
+
+TAG_DISPLAY_NAMES = {
+    "IPM Admin Management": "IPM Admin Management",
+    "Client Admin Management": "Client Admin Management",
+    "Facilitator Meeting Actions": "Facilitator Meeting Actions",
+    "team-auth": "Team Authentication",
+    "global-admin": "Global Admin",
+    "health": "Health Check",
+    "dev": "Development",
+}
+
+# ---------------------------------------------------------------------------
+# Entity fields (for architecture diagram hover on non-actionable entities)
+# ---------------------------------------------------------------------------
+ENTITY_FIELDS: dict[str, dict[str, Any]] = {
+    "Client": {
+        "firestore_path": "/clients/{client_id}",
+        "fields": [
+            ("client_id", "string", "Auto-generated document ID"),
+            ("name", "string", "Company name (1-255 chars)"),
+            ("language", "string", "ISO 639-1 code, default 'en'"),
+            ("timezone", "string", "IANA timezone, default 'Europe/Amsterdam'"),
+            ("progress_tracking_enabled", "bool", "Whether progress tracking is on"),
+            ("allowed_number_of_teams", "int", "Max teams allowed (default 10)"),
+            ("admins_count", "int", "Transaction-managed counter"),
+            ("is_active", "bool", "Soft-delete flag"),
+            ("created_at", "timestamp", "Server timestamp"),
+            ("updated_at", "timestamp", "Server timestamp"),
+        ],
+    },
+    "Team": {
+        "firestore_path": "/clients/{client_id}/teams/{team_id}",
+        "fields": [
+            ("team_id", "string", "Auto-generated document ID"),
+            ("client_id", "string", "Parent client reference"),
+            ("team_name", "string", "Team display name"),
+            ("access_link_id", "string", "UUID for QR code JWT"),
+            ("facilitators_count", "int", "Transaction-managed counter"),
+            ("team_members", "list[string]", "Employee IDs in team"),
+            ("is_active", "bool", "Soft-delete flag"),
+            ("created_at", "timestamp", "Server timestamp"),
+            ("updated_at", "timestamp", "Server timestamp"),
+        ],
+    },
+    "Employee": {
+        "firestore_path": "/clients/{client_id}/employees/{employee_id}",
+        "fields": [
+            ("employee_id", "string", "Auto-generated document ID"),
+            ("client_id", "string", "Parent client reference"),
+            ("name", "string", "Employee display name"),
+            ("teams", "list[string]", "Team IDs the employee belongs to"),
+            ("is_facilitator", "bool", "Whether employee can run meetings"),
+            ("meetings_facilitated", "int", "Counter of meetings run"),
+            ("pin_hash", "string | null", "Bcrypt-hashed 6-digit PIN"),
+            ("is_active", "bool", "Soft-delete flag"),
+            ("created_at", "timestamp", "Server timestamp"),
+            ("updated_at", "timestamp", "Server timestamp"),
+        ],
+    },
+    "Meeting": {
+        "firestore_path": "/clients/{cid}/teams/{tid}/meetings/{mid}",
+        "fields": [
+            ("meeting_id", "string", "Auto-generated document ID"),
+            ("facilitator", "string | null", "Employee ID of facilitator"),
+            ("team_id", "string", "Parent team reference"),
+            ("client_id", "string", "Parent client reference"),
+            ("title", "string | null", "Optional meeting title"),
+            ("duration", "string | null", "Total duration (hh:mm:ss)"),
+            ("participants", "list[string]", "Employee IDs of participants"),
+            ("audio_storage_path", "string | null", "Firebase Storage path"),
+            ("transcript_storage_path", "string | null", "Diarized transcript JSON path"),
+            ("facilitator_speaker_id", "string | null", "Speaker label (e.g. SPEAKER_00)"),
+            ("transcription_status", "enum", "NOT_STARTED | IN_PROGRESS | READY | FAILED"),
+            ("analysis_status", "enum", "NOT_STARTED | IN_PROGRESS | READY | FAILED"),
+            ("categories", "list | null", "8 CategoryEvaluation objects (scores 1-4)"),
+            ("selected_competencies", "object | null", "3 selected competencies + conclusion"),
+            ("is_active", "bool", "Soft-delete flag"),
+            ("created_at", "timestamp", "Server timestamp"),
+            ("updated_at", "timestamp", "Server timestamp"),
+        ],
+    },
+    "Access Request": {
+        "firestore_path": "/clients/{cid}/access_permissions/{pid}",
+        "fields": [
+            ("permission_id", "string", "Auto-generated document ID"),
+            ("client_id", "string", "Target client reference"),
+            ("made_by", "string", "IPM admin user ID who requested"),
+            ("status", "enum", "PENDING | ACCEPTED | DECLINED | REVOKED"),
+            ("processed_by", "string | null", "Client admin who handled it"),
+            ("created_at", "timestamp", "Server timestamp"),
+            ("updated_at", "timestamp", "Server timestamp"),
+        ],
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Endpoint definitions for human actors (for architecture diagram hover)
+# ---------------------------------------------------------------------------
+ACTOR_ENDPOINTS: dict[str, list[str]] = {
+    "IPM Admin": [
+        "ipm_create_client", "ipm_list_clients", "ipm_get_client", "ipm_delete_client",
+        "ipm_create_client_admin", "ipm_delete_client_admin",
+        "ipm_create_access_request", "ipm_delete_access_request",
+        "ipm_list_access_requests", "ipm_get_client_access_request",
+        "ipm_list_client_teams", "ipm_get_client_team",
+    ],
+    "Client Admin": [
+        "ca_create_team", "ca_list_teams", "ca_reset_qr",
+        "ca_list_access_requests", "ca_accept_access_request",
+        "ca_decline_access_request", "ca_revoke_access_request",
+        "ca_create_employee", "ca_list_employees", "ca_delete_employee",
+        "ca_employee_teams", "ca_employee_meetings",
+        "ca_add_team_member", "ca_remove_team_member", "ca_list_team_members",
+        "ca_set_facilitator", "ca_reset_pin",
+        "ca_list_team_meetings", "ca_add_participants", "ca_delete_meeting",
+        "ca_upload_voice_embedding", "ca_delete_voice_embedding",
+    ],
+    "Facilitator": [
+        "fac_create_meeting", "fac_list_meetings", "fac_get_meeting",
+        "fac_deactivate_meeting", "fac_transcribe", "fac_analyze",
+        "fac_diarize", "fac_diarize_identify",
+        "fac_confirm_speakers", "fac_assign_facilitator_speaker",
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Complete endpoint registry
+# ---------------------------------------------------------------------------
+ENDPOINTS: list[dict[str, Any]] = [
+    # ======================================================================
+    # IPM Admin Management
+    # ======================================================================
+    # -- Client Management --
+    {
+        "id": "ipm_create_client",
+        "method": "POST",
+        "path": "/ipm-admin/clients",
+        "tag": "IPM Admin Management",
+        "subcategory": "Client Management",
+        "title": "Create Client Company",
+        "summary": "Creates a new tenant company in the IPM platform.",
+        "auth": "Firebase Auth + IPM_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/ipm_admin.py",
+        "source_line": 73,
+        "description_long": (
+            "Creates a new client company (tenant) in the platform. The client can then "
+            "have admin users and teams assigned to it. Increments the platform-level "
+            "`clients_count` counter via a Firestore transaction."
+        ),
+        "request_body": [
+            ("name", "str", True, "Company name (1-255 chars)"),
+            ("language", "str", False, "ISO 639-1 code (default: 'en')"),
+            ("timezone", "str", False, "IANA timezone (default: 'Europe/Amsterdam')"),
+            ("progress_tracking_enabled", "bool", False, "Default: True"),
+            ("allowed_number_of_teams", "int", False, "Max teams, default 10, min 1"),
+        ],
+        "response_fields": [
+            ("client_id", "str", "Generated UUID"),
+            ("name", "str", "Company name"),
+            ("language", "str", "Language code"),
+            ("timezone", "str", "Timezone string"),
+            ("progress_tracking_enabled", "bool", "Tracking flag"),
+            ("allowed_number_of_teams", "int", "Team limit"),
+            ("admins_count", "int", "Current admin count (0)"),
+            ("is_active", "bool", "Always True on creation"),
+            ("created_at", "datetime", "Server timestamp"),
+            ("updated_at", "datetime", "Server timestamp"),
+        ],
+        "response_status": 201,
+        "status_codes": {201: "Client created", 403: "Not an IPM admin", 500: "Creation failed"},
+        "path_params": [],
+        "query_params": [],
+    },
+    {
+        "id": "ipm_list_clients",
+        "method": "GET",
+        "path": "/ipm-admin/clients",
+        "tag": "IPM Admin Management",
+        "subcategory": "Client Management",
+        "title": "List All Clients",
+        "summary": "Lists all client companies, optionally filtered by active status.",
+        "auth": "Firebase Auth + IPM_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/ipm_admin.py",
+        "source_line": 129,
+        "description_long": "Returns a paginated list of all client companies in the platform.",
+        "request_body": [],
+        "response_fields": [
+            ("clients", "list[ClientResponse]", "Array of client objects"),
+            ("total", "int", "Total count"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "Success", 403: "Not an IPM admin"},
+        "path_params": [],
+        "query_params": [("active_only", "bool", "Filter active clients only (default: True)")],
+    },
+    {
+        "id": "ipm_get_client",
+        "method": "GET",
+        "path": "/ipm-admin/clients/{client_id}",
+        "tag": "IPM Admin Management",
+        "subcategory": "Client Management",
+        "title": "Get Client Details",
+        "summary": "Retrieves a single client by ID.",
+        "auth": "Firebase Auth + IPM_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/ipm_admin.py",
+        "source_line": 170,
+        "description_long": "Fetches the full details for a specific client company.",
+        "request_body": [],
+        "response_fields": [
+            ("client_id", "str", "Client ID"),
+            ("name", "str", "Company name"),
+            ("language", "str", "Language code"),
+            ("timezone", "str", "Timezone"),
+            ("progress_tracking_enabled", "bool", "Tracking flag"),
+            ("allowed_number_of_teams", "int", "Team limit"),
+            ("admins_count", "int", "Admin count"),
+            ("is_active", "bool", "Active flag"),
+            ("created_at", "datetime", "Creation time"),
+            ("updated_at", "datetime", "Last update time"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "Success", 403: "Not an IPM admin", 404: "Client not found"},
+        "path_params": [("client_id", "str", "Client document ID")],
+        "query_params": [],
+    },
+    {
+        "id": "ipm_delete_client",
+        "method": "DELETE",
+        "path": "/ipm-admin/clients/{client_id}",
+        "tag": "IPM Admin Management",
+        "subcategory": "Client Management",
+        "title": "Deactivate Client",
+        "summary": "Soft-deletes a client by setting is_active to False.",
+        "auth": "Firebase Auth + IPM_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/ipm_admin.py",
+        "source_line": 211,
+        "description_long": (
+            "Sets the client's `is_active` flag to False. No data is permanently deleted. "
+            "The client will be hidden from default listings."
+        ),
+        "request_body": [],
+        "response_fields": [
+            ("success", "bool", "True"),
+            ("message", "str", "Confirmation message"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "Client deactivated", 403: "Not an IPM admin", 404: "Client not found"},
+        "path_params": [("client_id", "str", "Client document ID")],
+        "query_params": [],
+    },
+    # -- Client Admin Management --
+    {
+        "id": "ipm_create_client_admin",
+        "method": "POST",
+        "path": "/ipm-admin/clients/admins",
+        "tag": "IPM Admin Management",
+        "subcategory": "Client Admin Management",
+        "title": "Create Client Admin",
+        "summary": "Creates a Firebase Auth user and Firestore doc for a client admin.",
+        "auth": "Firebase Auth + IPM_ADMIN + X-Client-ID header",
+        "complexity": "moderate",
+        "source_file": "routers/ipm_admin.py",
+        "source_line": 257,
+        "description_long": (
+            "Creates both a Firebase Auth account and a Firestore user document with "
+            "CLIENT_ADMIN role. Requires `X-Client-ID` header to specify which client "
+            "the admin belongs to. Increments the client's `admins_count`. If Firestore "
+            "creation fails, the Firebase Auth user is rolled back (deleted)."
+        ),
+        "request_body": [
+            ("email", "EmailStr", True, "Admin email address"),
+            ("password", "str", True, "Password (min 6 chars)"),
+            ("display_name", "str", True, "Display name (1-255 chars)"),
+        ],
+        "response_fields": [
+            ("user_id", "str", "Firebase Auth UID"),
+            ("email", "str", "Email address"),
+            ("display_name", "str", "Display name"),
+            ("client_id", "str", "Assigned client ID"),
+        ],
+        "response_status": 201,
+        "status_codes": {
+            201: "Admin created",
+            400: "Missing X-Client-ID or client inactive",
+            403: "Not an IPM admin",
+            404: "Client not found",
+            409: "Email already exists",
+            500: "Creation failed",
+        },
+        "path_params": [],
+        "query_params": [],
+    },
+    {
+        "id": "ipm_delete_client_admin",
+        "method": "DELETE",
+        "path": "/ipm-admin/clients/{client_id}/admins/{admin_user_id}",
+        "tag": "IPM Admin Management",
+        "subcategory": "Client Admin Management",
+        "title": "Deactivate Client Admin",
+        "summary": "Disables Firebase Auth and sets Firestore user to inactive.",
+        "auth": "Firebase Auth + IPM_ADMIN",
+        "complexity": "moderate",
+        "source_file": "routers/ipm_admin.py",
+        "source_line": 364,
+        "description_long": (
+            "Disables the Firebase Auth account (prevents sign-in) and sets the Firestore "
+            "user document's `is_active` to False. Decrements the client's `admins_count`."
+        ),
+        "request_body": [],
+        "response_fields": [
+            ("success", "bool", "True"),
+            ("message", "str", "Confirmation message"),
+        ],
+        "response_status": 200,
+        "status_codes": {
+            200: "Admin disabled",
+            400: "User doesn't belong to client or already inactive",
+            403: "Not an IPM admin",
+            404: "Admin user not found",
+            500: "Disable failed",
+        },
+        "path_params": [
+            ("client_id", "str", "Client document ID"),
+            ("admin_user_id", "str", "Firebase Auth UID of the admin"),
+        ],
+        "query_params": [],
+    },
+    # -- Access Request Management (IPM Admin side) --
+    {
+        "id": "ipm_create_access_request",
+        "method": "POST",
+        "path": "/ipm-admin/access-requests",
+        "tag": "IPM Admin Management",
+        "subcategory": "Access Request Management",
+        "title": "Create Access Request",
+        "summary": "Requests access to a client's data. Client admin can accept/decline.",
+        "auth": "Firebase Auth + IPM_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/ipm_admin.py",
+        "source_line": 455,
+        "description_long": (
+            "Creates a PENDING access request for the specified client. The client admin "
+            "will see this request and can accept, decline, or ignore it."
+        ),
+        "request_body": [("client_id", "str", True, "Target client ID")],
+        "response_fields": [
+            ("permission_id", "str", "Generated permission ID"),
+            ("client_id", "str", "Target client"),
+            ("client_name", "str | null", "Client company name"),
+            ("made_by", "str", "Requesting admin's user ID"),
+            ("made_by_email", "str | null", "Requesting admin's email"),
+            ("status", "str", "Always 'PENDING'"),
+            ("processed_by", "str | null", "null (not processed yet)"),
+            ("created_at", "datetime", "Creation time"),
+            ("updated_at", "datetime", "Last update"),
+        ],
+        "response_status": 201,
+        "status_codes": {201: "Request created", 400: "Client not found or request exists", 403: "Not an IPM admin"},
+        "path_params": [],
+        "query_params": [],
+    },
+    {
+        "id": "ipm_delete_access_request",
+        "method": "DELETE",
+        "path": "/ipm-admin/access-requests/{permission_id}",
+        "tag": "IPM Admin Management",
+        "subcategory": "Access Request Management",
+        "title": "Delete Access Request",
+        "summary": "Deletes a pending access request (only your own, only if PENDING).",
+        "auth": "Firebase Auth + IPM_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/ipm_admin.py",
+        "source_line": 509,
+        "description_long": "Permanently removes a pending access request. Only the creator can delete, and only while status is PENDING.",
+        "request_body": [],
+        "response_fields": [("success", "bool", "True"), ("message", "str", "Confirmation")],
+        "response_status": 200,
+        "status_codes": {200: "Deleted", 400: "Not pending", 403: "Not creator or not IPM admin", 404: "Not found"},
+        "path_params": [("permission_id", "str", "Permission document ID")],
+        "query_params": [],
+    },
+    {
+        "id": "ipm_list_access_requests",
+        "method": "GET",
+        "path": "/ipm-admin/access-requests",
+        "tag": "IPM Admin Management",
+        "subcategory": "Access Request Management",
+        "title": "List My Access Requests",
+        "summary": "Lists all access requests made by the current IPM admin.",
+        "auth": "Firebase Auth + IPM_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/ipm_admin.py",
+        "source_line": 570,
+        "description_long": "Returns all access requests created by the currently authenticated IPM admin across all clients.",
+        "request_body": [],
+        "response_fields": [("permissions", "list[AccessPermissionResponse]", "Array of requests"), ("total", "int", "Count")],
+        "response_status": 200,
+        "status_codes": {200: "Success", 403: "Not an IPM admin"},
+        "path_params": [],
+        "query_params": [],
+    },
+    {
+        "id": "ipm_get_client_access_request",
+        "method": "GET",
+        "path": "/ipm-admin/clients/{client_id}/access-request",
+        "tag": "IPM Admin Management",
+        "subcategory": "Access Request Management",
+        "title": "Get Access Request for Client",
+        "summary": "Gets the current admin's access request for a specific client.",
+        "auth": "Firebase Auth + IPM_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/ipm_admin.py",
+        "source_line": 614,
+        "description_long": "Returns the access request (if any) that the current IPM admin has submitted for this specific client.",
+        "request_body": [],
+        "response_fields": [
+            ("permission_id", "str", "Permission ID"),
+            ("client_id", "str", "Client ID"),
+            ("status", "str", "Current status"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "Success", 403: "Not an IPM admin", 404: "No request found"},
+        "path_params": [("client_id", "str", "Client document ID")],
+        "query_params": [],
+    },
+    # -- Client Data Access --
+    {
+        "id": "ipm_list_client_teams",
+        "method": "GET",
+        "path": "/ipm-admin/clients/{client_id}/teams",
+        "tag": "IPM Admin Management",
+        "subcategory": "Client Data Access",
+        "title": "List Client Teams",
+        "summary": "Lists teams for a client (requires accepted access permission).",
+        "auth": "Firebase Auth + IPM_ADMIN + accepted access",
+        "complexity": "simple",
+        "source_file": "routers/ipm_admin.py",
+        "source_line": 663,
+        "description_long": "Lists all teams for a client company. The IPM admin must have an ACCEPTED access permission for this client.",
+        "request_body": [],
+        "response_fields": [("teams", "list[TeamResponse]", "Team objects"), ("total", "int", "Count")],
+        "response_status": 200,
+        "status_codes": {200: "Success", 403: "No accepted access permission"},
+        "path_params": [("client_id", "str", "Client document ID")],
+        "query_params": [("active_only", "bool", "Default True")],
+    },
+    {
+        "id": "ipm_get_client_team",
+        "method": "GET",
+        "path": "/ipm-admin/clients/{client_id}/teams/{team_id}",
+        "tag": "IPM Admin Management",
+        "subcategory": "Client Data Access",
+        "title": "Get Client Team",
+        "summary": "Gets a specific team (requires accepted access permission).",
+        "auth": "Firebase Auth + IPM_ADMIN + accepted access",
+        "complexity": "simple",
+        "source_file": "routers/ipm_admin.py",
+        "source_line": 705,
+        "description_long": "Returns details for a specific team. Requires accepted access permission for the client.",
+        "request_body": [],
+        "response_fields": [
+            ("team_id", "str", "Team ID"), ("client_id", "str", "Client ID"),
+            ("team_name", "str", "Name"), ("is_active", "bool", "Active flag"),
+            ("facilitators_count", "int", "Facilitator count"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "Success", 403: "No accepted access", 404: "Team not found"},
+        "path_params": [("client_id", "str", "Client ID"), ("team_id", "str", "Team ID")],
+        "query_params": [],
+    },
+
+    # ======================================================================
+    # Client Admin Management
+    # ======================================================================
+    # -- Team Management --
+    {
+        "id": "ca_create_team",
+        "method": "POST",
+        "path": "/client-admin/teams",
+        "tag": "Client Admin Management",
+        "subcategory": "Team Management",
+        "title": "Create Team",
+        "summary": "Creates a new team with an auto-generated QR code access link.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "moderate",
+        "source_file": "routers/client_admin.py",
+        "source_line": 100,
+        "description_long": (
+            "Creates a team within the admin's client company. Generates a UUID `access_link_id`, "
+            "signs it into a JWT (HS256, 365-day TTL), and returns a QR URL. Increments the user's "
+            "`teams_created` counter. Validates against the client's `allowed_number_of_teams`."
+        ),
+        "request_body": [("team_name", "str", True, "Team display name (1-255 chars)")],
+        "response_fields": [
+            ("team_id", "str", "Generated team ID"),
+            ("client_id", "str", "Parent client"),
+            ("team_name", "str", "Team name"),
+            ("qr_url", "str", "Shareable QR code URL with signed JWT"),
+            ("is_active", "bool", "True"),
+            ("created_at", "str", "Creation time"),
+        ],
+        "response_status": 201,
+        "status_codes": {201: "Team created", 400: "Team limit reached", 403: "Not a client admin", 500: "Failed"},
+        "path_params": [],
+        "query_params": [],
+    },
+    {
+        "id": "ca_list_teams",
+        "method": "GET",
+        "path": "/client-admin/teams",
+        "tag": "Client Admin Management",
+        "subcategory": "Team Management",
+        "title": "List Teams",
+        "summary": "Lists all teams for the client, optionally filtered by active status.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 244,
+        "description_long": "Returns all teams belonging to the admin's client company.",
+        "request_body": [],
+        "response_fields": [("teams", "list[TeamResponse]", "Team objects"), ("total", "int", "Count")],
+        "response_status": 200,
+        "status_codes": {200: "Success", 403: "Not a client admin"},
+        "path_params": [],
+        "query_params": [("active_only", "bool", "Default True")],
+    },
+    {
+        "id": "ca_reset_qr",
+        "method": "POST",
+        "path": "/client-admin/teams/{team_id}/reset-qr",
+        "tag": "Client Admin Management",
+        "subcategory": "Team Management",
+        "title": "Reset Team QR Code",
+        "summary": "Generates a new QR code URL, invalidating the previous one.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "moderate",
+        "source_file": "routers/client_admin.py",
+        "source_line": 175,
+        "description_long": (
+            "Generates a new `access_link_id` and JWT for the team's QR code. The old QR "
+            "code immediately stops working. Existing facilitator PINs remain unchanged. "
+            "Active sessions issued with the old access link will be rejected on next use."
+        ),
+        "request_body": [],
+        "response_fields": [("team_id", "str", "Team ID"), ("qr_url", "str", "New QR URL")],
+        "response_status": 200,
+        "status_codes": {200: "QR reset", 403: "Not a client admin", 404: "Team not found", 500: "Reset failed"},
+        "path_params": [("team_id", "str", "Team document ID")],
+        "query_params": [],
+    },
+    # -- Access Request Management (Client Admin side) --
+    {
+        "id": "ca_list_access_requests",
+        "method": "GET",
+        "path": "/client-admin/access-requests",
+        "tag": "Client Admin Management",
+        "subcategory": "Access Request Management",
+        "title": "List Access Requests",
+        "summary": "Lists all access requests from IPM admins for this client.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 288,
+        "description_long": "Returns all access permission requests targeting this client, regardless of status.",
+        "request_body": [],
+        "response_fields": [("permissions", "list[AccessPermissionResponse]", "Request objects"), ("total", "int", "Count")],
+        "response_status": 200,
+        "status_codes": {200: "Success", 403: "Not a client admin"},
+        "path_params": [],
+        "query_params": [],
+    },
+    {
+        "id": "ca_accept_access_request",
+        "method": "POST",
+        "path": "/client-admin/access-requests/{permission_id}/accept",
+        "tag": "Client Admin Management",
+        "subcategory": "Access Request Management",
+        "title": "Accept Access Request",
+        "summary": "Accepts a pending request, granting the IPM admin data access.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 336,
+        "description_long": "Changes status from PENDING to ACCEPTED. The requesting IPM admin can then view this client's teams and data.",
+        "request_body": [],
+        "response_fields": [("permission_id", "str", "ID"), ("status", "str", "'ACCEPTED'")],
+        "response_status": 200,
+        "status_codes": {200: "Accepted", 400: "Not pending", 403: "Not a client admin", 404: "Not found"},
+        "path_params": [("permission_id", "str", "Permission document ID")],
+        "query_params": [],
+    },
+    {
+        "id": "ca_decline_access_request",
+        "method": "POST",
+        "path": "/client-admin/access-requests/{permission_id}/decline",
+        "tag": "Client Admin Management",
+        "subcategory": "Access Request Management",
+        "title": "Decline Access Request",
+        "summary": "Declines a pending access request.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 406,
+        "description_long": "Changes status from PENDING to DECLINED.",
+        "request_body": [],
+        "response_fields": [("permission_id", "str", "ID"), ("status", "str", "'DECLINED'")],
+        "response_status": 200,
+        "status_codes": {200: "Declined", 400: "Not pending", 403: "Not a client admin", 404: "Not found"},
+        "path_params": [("permission_id", "str", "Permission document ID")],
+        "query_params": [],
+    },
+    {
+        "id": "ca_revoke_access_request",
+        "method": "POST",
+        "path": "/client-admin/access-requests/{permission_id}/revoke",
+        "tag": "Client Admin Management",
+        "subcategory": "Access Request Management",
+        "title": "Revoke Access",
+        "summary": "Revokes a previously accepted access request.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 475,
+        "description_long": "Changes status from ACCEPTED to REVOKED. The IPM admin immediately loses access to this client's data.",
+        "request_body": [],
+        "response_fields": [("permission_id", "str", "ID"), ("status", "str", "'REVOKED'")],
+        "response_status": 200,
+        "status_codes": {200: "Revoked", 400: "Not accepted", 403: "Not a client admin", 404: "Not found"},
+        "path_params": [("permission_id", "str", "Permission document ID")],
+        "query_params": [],
+    },
+    # -- Employee Management --
+    {
+        "id": "ca_create_employee",
+        "method": "POST",
+        "path": "/client-admin/employees",
+        "tag": "Client Admin Management",
+        "subcategory": "Employee Management",
+        "title": "Create Employee",
+        "summary": "Creates an employee and sets up their Firebase Storage folder.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "moderate",
+        "source_file": "routers/client_admin.py",
+        "source_line": 550,
+        "description_long": "Creates a Firestore employee document and a Firebase Storage folder at `clients/{client_id}/employees/{employee_id}/`.",
+        "request_body": [("name", "str", True, "Employee name (1-255 chars)")],
+        "response_fields": [
+            ("employee_id", "str", "Generated ID"),
+            ("client_id", "str", "Parent client"),
+            ("name", "str", "Employee name"),
+            ("storage_path", "str", "Firebase Storage folder path"),
+            ("is_active", "bool", "True"),
+            ("created_at", "str", "Creation time"),
+        ],
+        "response_status": 201,
+        "status_codes": {201: "Created", 403: "Not a client admin", 500: "Failed"},
+        "path_params": [],
+        "query_params": [],
+    },
+    {
+        "id": "ca_list_employees",
+        "method": "GET",
+        "path": "/client-admin/employees",
+        "tag": "Client Admin Management",
+        "subcategory": "Employee Management",
+        "title": "List Employees",
+        "summary": "Lists all employees for the client.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 609,
+        "description_long": "Returns all employees belonging to the admin's client company.",
+        "request_body": [],
+        "response_fields": [("employees", "list[EmployeeResponse]", "Employee objects"), ("total", "int", "Count")],
+        "response_status": 200,
+        "status_codes": {200: "Success", 403: "Not a client admin"},
+        "path_params": [],
+        "query_params": [("active_only", "bool", "Default True")],
+    },
+    {
+        "id": "ca_delete_employee",
+        "method": "DELETE",
+        "path": "/client-admin/employees/{employee_id}",
+        "tag": "Client Admin Management",
+        "subcategory": "Employee Management",
+        "title": "Delete Employee",
+        "summary": "Hard-deletes employee, removes from all teams, deletes storage folder.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "moderate",
+        "source_file": "routers/client_admin.py",
+        "source_line": 649,
+        "description_long": "Permanently deletes the employee document, removes them from all team member lists, and deletes all files in their Storage folder.",
+        "request_body": [],
+        "response_fields": [("success", "bool", "True"), ("message", "str", "Confirmation")],
+        "response_status": 200,
+        "status_codes": {200: "Deleted", 403: "Not a client admin", 404: "Not found"},
+        "path_params": [("employee_id", "str", "Employee document ID")],
+        "query_params": [],
+    },
+    {
+        "id": "ca_employee_teams",
+        "method": "GET",
+        "path": "/client-admin/employees/{employee_id}/teams",
+        "tag": "Client Admin Management",
+        "subcategory": "Employee Management",
+        "title": "Get Employee Teams",
+        "summary": "Returns all teams the employee is a member of.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 691,
+        "description_long": "Fetches the employee's `teams` list and resolves each team ID to a full TeamResponse.",
+        "request_body": [],
+        "response_fields": [("employee_id", "str", "Employee ID"), ("teams", "list[TeamResponse]", "Teams"), ("total", "int", "Count")],
+        "response_status": 200,
+        "status_codes": {200: "Success", 403: "Not a client admin", 404: "Employee not found"},
+        "path_params": [("employee_id", "str", "Employee document ID")],
+        "query_params": [],
+    },
+    {
+        "id": "ca_employee_meetings",
+        "method": "GET",
+        "path": "/client-admin/employees/{employee_id}/meetings",
+        "tag": "Client Admin Management",
+        "subcategory": "Employee Management",
+        "title": "List Employee Meetings",
+        "summary": "Lists meetings facilitated by an employee (must be a facilitator).",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 739,
+        "description_long": "Returns all meetings where this employee is the assigned facilitator. Employee must have `is_facilitator=True`.",
+        "request_body": [],
+        "response_fields": [("meetings", "list[MeetingAdminResponse]", "Meeting objects"), ("total", "int", "Count")],
+        "response_status": 200,
+        "status_codes": {200: "Success", 400: "Not a facilitator", 403: "Not a client admin", 404: "Employee not found"},
+        "path_params": [("employee_id", "str", "Employee document ID")],
+        "query_params": [],
+    },
+    # -- Team Member Management --
+    {
+        "id": "ca_add_team_member",
+        "method": "POST",
+        "path": "/client-admin/teams/{team_id}/members/{employee_id}",
+        "tag": "Client Admin Management",
+        "subcategory": "Team Member Management",
+        "title": "Add Team Member",
+        "summary": "Adds an employee to a team (updates both documents).",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 801,
+        "description_long": "Adds `team_id` to the employee's `teams` list and `employee_id` to the team's `team_members` list.",
+        "request_body": [],
+        "response_fields": [("success", "bool", "True"), ("message", "str", "Confirmation")],
+        "response_status": 201,
+        "status_codes": {201: "Added", 400: "Already a member or inactive", 403: "Not a client admin"},
+        "path_params": [("team_id", "str", "Team ID"), ("employee_id", "str", "Employee ID")],
+        "query_params": [],
+    },
+    {
+        "id": "ca_remove_team_member",
+        "method": "DELETE",
+        "path": "/client-admin/teams/{team_id}/members/{employee_id}",
+        "tag": "Client Admin Management",
+        "subcategory": "Team Member Management",
+        "title": "Remove Team Member",
+        "summary": "Removes an employee from a team.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 852,
+        "description_long": "Removes `team_id` from employee's `teams` list and `employee_id` from team's `team_members` list.",
+        "request_body": [],
+        "response_fields": [("success", "bool", "True"), ("message", "str", "Confirmation")],
+        "response_status": 200,
+        "status_codes": {200: "Removed", 403: "Not a client admin", 404: "Not a member"},
+        "path_params": [("team_id", "str", "Team ID"), ("employee_id", "str", "Employee ID")],
+        "query_params": [],
+    },
+    {
+        "id": "ca_list_team_members",
+        "method": "GET",
+        "path": "/client-admin/teams/{team_id}/members",
+        "tag": "Client Admin Management",
+        "subcategory": "Team Member Management",
+        "title": "List Team Members",
+        "summary": "Lists all employees in a team with facilitator info.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 895,
+        "description_long": "Returns all employees who are members of the specified team.",
+        "request_body": [],
+        "response_fields": [
+            ("team_id", "str", "Team ID"),
+            ("members", "list[TeamMemberResponse]", "Members with name, is_facilitator, meetings_facilitated"),
+            ("total", "int", "Count"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "Success", 403: "Not a client admin", 404: "Team not found"},
+        "path_params": [("team_id", "str", "Team document ID")],
+        "query_params": [],
+    },
+    # -- Facilitator Setup --
+    {
+        "id": "ca_set_facilitator",
+        "method": "POST",
+        "path": "/client-admin/employees/{employee_id}/set-facilitator",
+        "tag": "Client Admin Management",
+        "subcategory": "Facilitator Setup",
+        "title": "Set Employee as Facilitator",
+        "summary": "Makes an employee a facilitator and generates a 6-digit PIN.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "moderate",
+        "source_file": "routers/client_admin.py",
+        "source_line": 940,
+        "description_long": (
+            "Sets `is_facilitator=True`, generates a random 6-digit PIN, hashes it with bcrypt "
+            "(12 rounds), and stores the hash. The plain PIN is returned once and cannot be "
+            "retrieved later. The facilitator uses this PIN with a QR code to authenticate."
+        ),
+        "request_body": [],
+        "response_fields": [
+            ("employee_id", "str", "Employee ID"),
+            ("name", "str", "Employee name"),
+            ("pin", "str", "6-digit PIN (one-time display)"),
+            ("is_facilitator", "bool", "True"),
+            ("message", "str", "Warning to store PIN securely"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "Facilitator set", 400: "Not active", 403: "Not a client admin", 404: "Not found"},
+        "path_params": [("employee_id", "str", "Employee document ID")],
+        "query_params": [],
+    },
+    {
+        "id": "ca_reset_pin",
+        "method": "POST",
+        "path": "/client-admin/employees/{employee_id}/reset-facilitator-pin",
+        "tag": "Client Admin Management",
+        "subcategory": "Facilitator Setup",
+        "title": "Reset Facilitator PIN",
+        "summary": "Generates a new 6-digit PIN for an existing facilitator.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 1004,
+        "description_long": "Generates a new random PIN and replaces the stored hash. Employee must already have `is_facilitator=True`.",
+        "request_body": [],
+        "response_fields": [
+            ("employee_id", "str", "Employee ID"),
+            ("pin", "str", "New 6-digit PIN (one-time display)"),
+            ("message", "str", "Warning to store PIN"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "PIN reset", 400: "Not a facilitator", 403: "Not a client admin", 404: "Not found"},
+        "path_params": [("employee_id", "str", "Employee document ID")],
+        "query_params": [],
+    },
+    # -- Meeting Management --
+    {
+        "id": "ca_list_team_meetings",
+        "method": "GET",
+        "path": "/client-admin/teams/{team_id}/meetings",
+        "tag": "Client Admin Management",
+        "subcategory": "Meeting Management",
+        "title": "List Team Meetings",
+        "summary": "Lists all meetings for a team with facilitator names.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 1065,
+        "description_long": "Returns all meetings under the specified team, with resolved facilitator names.",
+        "request_body": [],
+        "response_fields": [("meetings", "list[MeetingAdminResponse]", "Meetings with admin-level detail"), ("total", "int", "Count")],
+        "response_status": 200,
+        "status_codes": {200: "Success", 403: "Not a client admin"},
+        "path_params": [("team_id", "str", "Team document ID")],
+        "query_params": [("active_only", "bool", "Default False")],
+    },
+    {
+        "id": "ca_add_participants",
+        "method": "POST",
+        "path": "/client-admin/teams/{team_id}/meetings/{meeting_id}/participants",
+        "tag": "Client Admin Management",
+        "subcategory": "Meeting Management",
+        "title": "Add Meeting Participants",
+        "summary": "Adds employees as participants to a meeting (must be team members).",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 1124,
+        "description_long": "Adds employee IDs to the meeting's `participants` list. All employees must be members of the team.",
+        "request_body": [("employee_ids", "list[str]", True, "List of employee IDs (min 1)")],
+        "response_fields": [("success", "bool", "True"), ("message", "str", "Count of added participants")],
+        "response_status": 200,
+        "status_codes": {200: "Added", 400: "Not a team member", 403: "Not a client admin", 404: "Meeting/team not found"},
+        "path_params": [("team_id", "str", "Team ID"), ("meeting_id", "str", "Meeting ID")],
+        "query_params": [],
+    },
+    {
+        "id": "ca_delete_meeting",
+        "method": "DELETE",
+        "path": "/client-admin/teams/{team_id}/meetings/{meeting_id}",
+        "tag": "Client Admin Management",
+        "subcategory": "Meeting Management",
+        "title": "Delete Meeting",
+        "summary": "Hard-deletes a meeting document (audio files in Storage are preserved).",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 1178,
+        "description_long": "Permanently removes the meeting document from Firestore. Associated audio files in Firebase Storage are NOT deleted.",
+        "request_body": [],
+        "response_fields": [("success", "bool", "True"), ("message", "str", "Confirmation")],
+        "response_status": 200,
+        "status_codes": {200: "Deleted", 403: "Not a client admin", 404: "Meeting not found"},
+        "path_params": [("team_id", "str", "Team ID"), ("meeting_id", "str", "Meeting ID")],
+        "query_params": [],
+    },
+    # -- Voice Embedding Management --
+    {
+        "id": "ca_upload_voice_embedding",
+        "method": "POST",
+        "path": "/client-admin/employees/{employee_id}/voice-embeddings",
+        "tag": "Client Admin Management",
+        "subcategory": "Voice Embedding Management",
+        "title": "Upload Voice Embedding",
+        "summary": "Uploads audio, creates a speaker embedding via SpeechBrain, stores in Firebase Storage.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "complex",
+        "source_file": "routers/client_admin.py",
+        "source_line": 1228,
+        "description_long": (
+            "Accepts an audio file (mp3/wav), preprocesses it to mono 16kHz WAV, computes a "
+            "speaker embedding using SpeechBrain's ECAPA-VoxCeleb encoder, serializes it as "
+            "a numpy `.npy` file, and uploads to Firebase Storage under the employee's folder. "
+            "These embeddings are later used by the speaker identification pipeline to match "
+            "meeting speakers to known employees."
+        ),
+        "request_body": [("file", "UploadFile", True, "Audio file (mp3 or wav)")],
+        "response_fields": [
+            ("embedding_id", "str", "Generated embedding UUID"),
+            ("employee_id", "str", "Employee ID"),
+            ("storage_path", "str", "Firebase Storage path"),
+        ],
+        "response_status": 201,
+        "status_codes": {
+            201: "Embedding created",
+            400: "Invalid audio type or no speech detected",
+            403: "Not a client admin",
+            404: "Employee not found",
+            500: "Processing failed",
+        },
+        "path_params": [("employee_id", "str", "Employee document ID")],
+        "query_params": [],
+    },
+    {
+        "id": "ca_delete_voice_embedding",
+        "method": "DELETE",
+        "path": "/client-admin/employees/{employee_id}/voice-embeddings/{embedding_id}",
+        "tag": "Client Admin Management",
+        "subcategory": "Voice Embedding Management",
+        "title": "Delete Voice Embedding",
+        "summary": "Deletes a specific voice embedding from Firebase Storage.",
+        "auth": "Firebase Auth + CLIENT_ADMIN",
+        "complexity": "simple",
+        "source_file": "routers/client_admin.py",
+        "source_line": 1322,
+        "description_long": "Removes the .npy embedding file from the employee's Storage folder.",
+        "request_body": [],
+        "response_fields": [("success", "bool", "True"), ("message", "str", "Confirmation")],
+        "response_status": 200,
+        "status_codes": {200: "Deleted", 403: "Not a client admin", 404: "Employee or embedding not found"},
+        "path_params": [("employee_id", "str", "Employee ID"), ("embedding_id", "str", "Embedding UUID")],
+        "query_params": [],
+    },
+
+    # ======================================================================
+    # Facilitator Meeting Actions
+    # ======================================================================
+    # -- Meeting Management --
+    {
+        "id": "fac_create_meeting",
+        "method": "POST",
+        "path": "/facilitator/meetings",
+        "tag": "Facilitator Meeting Actions",
+        "subcategory": "Meeting Management",
+        "title": "Create Meeting",
+        "summary": "Creates a new meeting for the authenticated facilitator.",
+        "auth": "X-Team-Session",
+        "complexity": "simple",
+        "source_file": "routers/facilitator.py",
+        "source_line": 114,
+        "description_long": "Creates a meeting under the facilitator's team/client path. Validates the team is still active and the access link hasn't been rotated.",
+        "request_body": [("title", "str | null", False, "Optional meeting title (max 255)")],
+        "response_fields": [
+            ("meeting_id", "str", "Generated ID"),
+            ("facilitator_id", "str", "Facilitator employee ID"),
+            ("team_id", "str", "Team ID"),
+            ("client_id", "str", "Client ID"),
+            ("title", "str | null", "Meeting title"),
+            ("transcription_status", "str", "NOT_STARTED"),
+            ("analysis_status", "str", "NOT_STARTED"),
+        ],
+        "response_status": 201,
+        "status_codes": {201: "Created", 401: "Invalid session", 403: "Team inactive or access revoked", 500: "Failed"},
+        "path_params": [],
+        "query_params": [],
+    },
+    {
+        "id": "fac_list_meetings",
+        "method": "GET",
+        "path": "/facilitator/meetings",
+        "tag": "Facilitator Meeting Actions",
+        "subcategory": "Meeting Management",
+        "title": "List Meetings",
+        "summary": "Lists all meetings for the facilitator, newest first.",
+        "auth": "X-Team-Session",
+        "complexity": "simple",
+        "source_file": "routers/facilitator.py",
+        "source_line": 190,
+        "description_long": "Returns the facilitator's own meetings ordered by creation date (newest first). Each facilitator only sees their own meetings.",
+        "request_body": [],
+        "response_fields": [("meetings", "list[MeetingResponse]", "Meeting objects"), ("total", "int", "Count")],
+        "response_status": 200,
+        "status_codes": {200: "Success", 401: "Invalid session"},
+        "path_params": [],
+        "query_params": [("limit", "int | null", "Max results to return")],
+    },
+    {
+        "id": "fac_get_meeting",
+        "method": "GET",
+        "path": "/facilitator/meetings/{meeting_id}",
+        "tag": "Facilitator Meeting Actions",
+        "subcategory": "Meeting Management",
+        "title": "Get Meeting",
+        "summary": "Gets a specific meeting by ID (own meetings only).",
+        "auth": "X-Team-Session",
+        "complexity": "simple",
+        "source_file": "routers/facilitator.py",
+        "source_line": 227,
+        "description_long": "Returns details for a specific meeting. Facilitators can only retrieve their own meetings.",
+        "request_body": [],
+        "response_fields": [("meeting_id", "str", "ID"), ("title", "str | null", "Title"), ("transcription_status", "str", "Status"), ("analysis_status", "str", "Status")],
+        "response_status": 200,
+        "status_codes": {200: "Success", 401: "Invalid session", 404: "Not found"},
+        "path_params": [("meeting_id", "str", "Meeting document ID")],
+        "query_params": [],
+    },
+    {
+        "id": "fac_deactivate_meeting",
+        "method": "POST",
+        "path": "/facilitator/meetings/{meeting_id}/deactivate",
+        "tag": "Facilitator Meeting Actions",
+        "subcategory": "Meeting Management",
+        "title": "Deactivate Meeting",
+        "summary": "Soft-deletes a meeting (sets is_active=False, preserves data).",
+        "auth": "X-Team-Session",
+        "complexity": "simple",
+        "source_file": "routers/facilitator.py",
+        "source_line": 267,
+        "description_long": "Sets the meeting's `is_active` flag to False, hiding it from normal lists while preserving all data including transcripts and analysis.",
+        "request_body": [],
+        "response_fields": [("meeting_id", "str", "ID"), ("is_active", "bool", "False")],
+        "response_status": 200,
+        "status_codes": {200: "Deactivated", 401: "Invalid session", 403: "Team inactive", 404: "Not found"},
+        "path_params": [("meeting_id", "str", "Meeting document ID")],
+        "query_params": [],
+    },
+    # -- Transcription --
+    {
+        "id": "fac_transcribe",
+        "method": "POST",
+        "path": "/facilitator/meetings/{meeting_id}/transcribe",
+        "tag": "Facilitator Meeting Actions",
+        "subcategory": "Transcription",
+        "title": "Transcribe Meeting Audio",
+        "summary": "Uploads audio files, transcribes with Gemini, saves combined transcript.",
+        "auth": "X-Team-Session",
+        "complexity": "complex",
+        "source_file": "routers/facilitator.py",
+        "source_line": 340,
+        "description_long": (
+            "Accepts multiple audio files via multipart/form-data. Each file is validated "
+            "(type + size), uploaded to Firebase Storage, and transcribed using Google Gemini "
+            "with automatic language detection. Transcripts are concatenated in upload order "
+            "and saved to Storage. The meeting document is updated with total duration and "
+            "transcription_status=READY.\n\n"
+            "**Supported formats:** audio/mp4, audio/mpeg, audio/wav, audio/x-wav, audio/m4a, "
+            "audio/x-m4a, audio/webm\n"
+            "**Max file size:** 100MB per file"
+        ),
+        "request_body": [("audio_files", "list[UploadFile]", True, "Audio files to transcribe (multipart/form-data)")],
+        "response_fields": [
+            ("meeting_id", "str", "Meeting ID"),
+            ("transcription_status", "str", "READY or FAILED"),
+            ("transcript_text", "str | null", "Combined transcript text"),
+            ("audio_storage_paths", "list[str]", "Storage paths for uploaded files"),
+            ("transcript_storage_path", "str | null", "Path to saved transcript"),
+            ("total_duration", "str", "Combined duration (hh:mm:ss)"),
+            ("metadata", "list[TranscriptionMetadata]", "Per-file metadata (filename, size, type, duration)"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "Transcribed", 400: "Invalid audio type or too large", 401: "Invalid session", 403: "Team inactive", 404: "Meeting not found", 500: "Transcription failed"},
+        "path_params": [("meeting_id", "str", "Meeting document ID")],
+        "query_params": [],
+    },
+    # -- Analysis --
+    {
+        "id": "fac_analyze",
+        "method": "POST",
+        "path": "/facilitator/meetings/{meeting_id}/analyze",
+        "tag": "Facilitator Meeting Actions",
+        "subcategory": "Analysis",
+        "title": "Analyze Meeting Transcript",
+        "summary": "Runs AI analysis for team maturity (8 categories) and facilitator competencies (3).",
+        "auth": "X-Team-Session",
+        "complexity": "complex",
+        "source_file": "routers/facilitator.py",
+        "source_line": 447,
+        "description_long": (
+            "Fetches transcript files from Firebase Storage and runs Gemini AI analysis for:\n"
+            "- **8 team maturity categories** scored 1-4 (Initial/Developing/Established/Advanced) "
+            "with explanation and suggestions\n"
+            "- **3 most relevant facilitator competencies** selected from 25, each with assessment, "
+            "priority (high/medium/low), and actionable feedback\n\n"
+            "Results are stored in the meeting document's `categories` and `selected_competencies` fields. "
+            "Prerequisite: transcription must be completed first."
+        ),
+        "request_body": [],
+        "response_fields": [
+            ("meeting_id", "str", "Meeting ID"),
+            ("analysis_status", "str", "READY or FAILED"),
+            ("categories", "list[CategoryScoreResponse]", "8 category evaluations"),
+            ("selected_competencies", "list[SelectedCompetencyResponse]", "3 competency evaluations"),
+            ("general_conclusion", "str", "Overall assessment (max 5 sentences)"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "Analyzed", 401: "Invalid session", 403: "Team inactive", 404: "No transcript found", 500: "Analysis failed"},
+        "path_params": [("meeting_id", "str", "Meeting document ID")],
+        "query_params": [],
+    },
+    # -- Diarization & Speaker ID --
+    {
+        "id": "fac_diarize",
+        "method": "POST",
+        "path": "/facilitator/meetings/{meeting_id}/diarize",
+        "tag": "Facilitator Meeting Actions",
+        "subcategory": "Diarization & Speaker ID",
+        "title": "Diarize Meeting Audio",
+        "summary": "Speaker diarization via WhisperX + pyannote, returns speaker previews.",
+        "auth": "X-Team-Session",
+        "complexity": "complex",
+        "source_file": "routers/facilitator.py",
+        "source_line": 556,
+        "description_long": (
+            "**Pipeline:**\n"
+            "1. Validates meeting exists and audio type (mp3/wav)\n"
+            "2. Runs WhisperX transcription + pyannote speaker diarization\n"
+            "3. Extracts per-speaker audio using pydub\n"
+            "4. Trims each speaker to 10s preview, base64-encodes\n"
+            "5. Saves diarized transcript JSON to Firebase Storage\n"
+            "6. Updates meeting with `transcript_storage_path`\n\n"
+            "Speaker previews are ephemeral (returned in response, not persisted)."
+        ),
+        "request_body": [("file", "UploadFile", True, "Audio file (mp3 or wav)")],
+        "response_fields": [
+            ("meeting_id", "str", "Meeting ID"),
+            ("transcript_storage_path", "str", "Path to diarized JSON"),
+            ("speakers_count", "int", "Number of detected speakers"),
+            ("segments_count", "int", "Number of transcript segments"),
+            ("speaker_previews", "list[SpeakerPreview]", "Per-speaker audio previews (label, base64 wav, duration)"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "Diarized", 400: "Invalid audio or no speech", 401: "Invalid session", 404: "Meeting not found", 500: "Diarization failed"},
+        "path_params": [("meeting_id", "str", "Meeting document ID")],
+        "query_params": [],
+    },
+    {
+        "id": "fac_diarize_identify",
+        "method": "POST",
+        "path": "/facilitator/meetings/{meeting_id}/diarize-and-identify",
+        "tag": "Facilitator Meeting Actions",
+        "subcategory": "Diarization & Speaker ID",
+        "title": "Diarize & Identify Speakers",
+        "summary": "Full pipeline: diarize audio + match speakers to employees via voice embeddings.",
+        "auth": "X-Team-Session",
+        "complexity": "complex",
+        "source_file": "routers/facilitator.py",
+        "source_line": 686,
+        "description_long": (
+            "**Extended diarization pipeline with speaker identification:**\n\n"
+            "1. Validates meeting and audio type\n"
+            "2. Runs WhisperX + pyannote diarization\n"
+            "3. Saves diarized transcript JSON to Storage\n"
+            "4. Extracts per-speaker audio (full concatenation)\n"
+            "5. Normalizes each speaker's audio to mono 16kHz WAV\n"
+            "6. Computes speaker embedding via SpeechBrain ECAPA-VoxCeleb\n"
+            "7. Saves speaker embeddings JSON to Storage\n"
+            "8. Loads participant voice embeddings from Storage\n"
+            "9. Builds similarity matrix (cosine similarity via dot product)\n"
+            "10. Runs Hungarian algorithm for optimal 1-to-1 matching\n"
+            "11. Returns speaker previews (10s) + match results with employee names\n\n"
+            "Matches below the similarity threshold are returned with `employee_id=null`."
+        ),
+        "request_body": [("file", "UploadFile", True, "Audio file (mp3 or wav)")],
+        "response_fields": [
+            ("meeting_id", "str", "Meeting ID"),
+            ("transcript_storage_path", "str", "Path to diarized JSON"),
+            ("speakers_count", "int", "Number of detected speakers"),
+            ("segments_count", "int", "Number of transcript segments"),
+            ("speaker_previews", "list[SpeakerPreview]", "Per-speaker audio previews"),
+            ("speaker_matches", "list[SpeakerMatch]", "Speaker-to-employee matches (label, employee_id, name, similarity_score)"),
+        ],
+        "response_status": 200,
+        "status_codes": {
+            200: "Diarized and identified",
+            400: "Invalid audio or no speech",
+            401: "Invalid session",
+            404: "Meeting not found",
+            500: "Pipeline failed (diarization, embedding, or matching)",
+        },
+        "path_params": [("meeting_id", "str", "Meeting document ID")],
+        "query_params": [],
+    },
+    {
+        "id": "fac_confirm_speakers",
+        "method": "POST",
+        "path": "/facilitator/meetings/{meeting_id}/confirm-speakers",
+        "tag": "Facilitator Meeting Actions",
+        "subcategory": "Diarization & Speaker ID",
+        "title": "Confirm Speaker Assignments",
+        "summary": "Saves confirmed speaker-to-employee mappings after review.",
+        "auth": "X-Team-Session",
+        "complexity": "moderate",
+        "source_file": "routers/facilitator.py",
+        "source_line": 896,
+        "description_long": (
+            "After reviewing diarize-and-identify results, the facilitator confirms which "
+            "speaker label maps to which employee. This endpoint:\n"
+            "1. Validates all employees are meeting participants\n"
+            "2. Updates diarized transcript JSON with real employee names\n"
+            "3. Saves each speaker's embedding to the matched employee's Storage folder "
+            "(enriching future matching)"
+        ),
+        "request_body": [("assignments", "list[SpeakerAssignment]", True, "List of {speaker_label, employee_id} (min 1)")],
+        "response_fields": [("success", "bool", "True"), ("message", "str", "Count of saved assignments")],
+        "response_status": 200,
+        "status_codes": {200: "Confirmed", 400: "Employee not a participant", 401: "Invalid session", 404: "Meeting or transcript not found", 500: "Failed"},
+        "path_params": [("meeting_id", "str", "Meeting document ID")],
+        "query_params": [],
+    },
+    {
+        "id": "fac_assign_facilitator_speaker",
+        "method": "POST",
+        "path": "/facilitator/meetings/{meeting_id}/facilitator",
+        "tag": "Facilitator Meeting Actions",
+        "subcategory": "Diarization & Speaker ID",
+        "title": "Assign Facilitator Speaker",
+        "summary": "Identifies which diarized speaker label is the facilitator.",
+        "auth": "X-Team-Session",
+        "complexity": "simple",
+        "source_file": "routers/facilitator.py",
+        "source_line": 1041,
+        "description_long": "After diarization, the facilitator reviews speaker previews and selects which speaker label (e.g. 'SPEAKER_00') represents themselves. Saved to `meeting.facilitator_speaker_id`.",
+        "request_body": [("speaker_label", "str", True, "Speaker label (e.g. 'SPEAKER_00')")],
+        "response_fields": [("success", "bool", "True"), ("message", "str", "Confirmation")],
+        "response_status": 200,
+        "status_codes": {200: "Assigned", 401: "Invalid session", 404: "Meeting not found", 500: "Update failed"},
+        "path_params": [("meeting_id", "str", "Meeting document ID")],
+        "query_params": [],
+    },
+
+    # ======================================================================
+    # Team Auth
+    # ======================================================================
+    {
+        "id": "auth_create_session",
+        "method": "POST",
+        "path": "/client/team-auth/session",
+        "tag": "team-auth",
+        "subcategory": "Session",
+        "title": "Create Facilitator Session",
+        "summary": "Authenticates facilitator via QR code token + PIN, issues session JWT.",
+        "auth": "X-Access-Token header (QR code JWT)",
+        "complexity": "moderate",
+        "source_file": "routers/client_team_auth.py",
+        "source_line": 45,
+        "description_long": (
+            "Verifies the QR code JWT from `X-Access-Token` header, then authenticates the "
+            "facilitator by matching the submitted 6-digit PIN against stored bcrypt hashes. "
+            "Issues a session JWT (HS256, 24h TTL) containing facilitator_id, team_id, "
+            "client_id, and access_link_id. This session token is used in the `X-Team-Session` "
+            "header for all subsequent facilitator API calls."
+        ),
+        "request_body": [("pin", "str", True, "6-digit PIN (regex: ^\\d{6}$)")],
+        "response_fields": [
+            ("session_token", "str", "Session JWT for X-Team-Session header"),
+            ("expires_at", "datetime", "Token expiry time"),
+            ("facilitator_id", "str", "Authenticated facilitator's employee ID"),
+            ("facilitator_name", "str", "Facilitator's display name"),
+            ("team_id", "str", "Team ID from QR code"),
+            ("team_name", "str", "Team display name"),
+            ("client_id", "str", "Client ID from QR code"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "Session created", 400: "Missing or invalid access token", 401: "Incorrect PIN", 403: "Team inactive or access link revoked", 404: "Team not found"},
+        "path_params": [],
+        "query_params": [],
+    },
+
+    # ======================================================================
+    # Global Admin
+    # ======================================================================
+    {
+        "id": "global_admin_login",
+        "method": "POST",
+        "path": "/global/admin/login",
+        "tag": "global-admin",
+        "subcategory": "Authentication",
+        "title": "Admin Login",
+        "summary": "Authenticates with Firebase Auth REST API, returns ID token.",
+        "auth": "None (public)",
+        "complexity": "simple",
+        "source_file": "routers/global_admin.py",
+        "source_line": 52,
+        "description_long": (
+            "Signs in with email/password via the Firebase Auth REST API. Returns a Firebase "
+            "ID token that should be used as `Authorization: Bearer {token}` for all "
+            "authenticated admin endpoints. Used by both IPM Admins and Client Admins."
+        ),
+        "request_body": [
+            ("email", "EmailStr", True, "Admin email address"),
+            ("password", "str", True, "Password"),
+        ],
+        "response_fields": [
+            ("id_token", "str", "Firebase ID token (use in Authorization header)"),
+            ("user_id", "str", "Firebase Auth UID"),
+            ("email", "str", "User email"),
+            ("expires_in", "str", "Token lifetime in seconds"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "Login successful", 401: "Invalid credentials", 500: "Firebase API key not configured"},
+        "path_params": [],
+        "query_params": [],
+    },
+
+    # ======================================================================
+    # Health
+    # ======================================================================
+    {
+        "id": "health_check",
+        "method": "GET",
+        "path": "/health",
+        "tag": "health",
+        "subcategory": "System",
+        "title": "Health Check",
+        "summary": "Basic health check - returns 'healthy' status.",
+        "auth": "None (public)",
+        "complexity": "simple",
+        "source_file": "routers/health.py",
+        "source_line": 14,
+        "description_long": "Returns a simple health status. Used by load balancers and monitoring.",
+        "request_body": [],
+        "response_fields": [("status", "str", "'healthy'"), ("message", "str", "'Hello world!'")],
+        "response_status": 200,
+        "status_codes": {200: "Healthy"},
+        "path_params": [],
+        "query_params": [],
+    },
+    {
+        "id": "health_db",
+        "method": "GET",
+        "path": "/health/db",
+        "tag": "health",
+        "subcategory": "System",
+        "title": "Database Status",
+        "summary": "Checks Firebase Firestore connection, returns project ID and collections.",
+        "auth": "None (public)",
+        "complexity": "simple",
+        "source_file": "routers/health.py",
+        "source_line": 23,
+        "description_long": "Verifies the Firestore connection is alive and returns the GCP project ID and a list of root-level collections with document counts.",
+        "request_body": [],
+        "response_fields": [
+            ("status", "str", "'connected' or 'error'"),
+            ("project_id", "str", "GCP project ID"),
+            ("collections", "list[CollectionInfo]", "Collection names + doc counts"),
+            ("error", "str | null", "Error message if failed"),
+        ],
+        "response_status": 200,
+        "status_codes": {200: "Connected", 500: "Connection failed"},
+        "path_params": [],
+        "query_params": [],
+    },
+
+    # ======================================================================
+    # Dev
+    # ======================================================================
+    {
+        "id": "dev_create_ipm_admin",
+        "method": "POST",
+        "path": "/dev/users/ipm-admin",
+        "tag": "dev",
+        "subcategory": "Bootstrap",
+        "title": "Create IPM Admin (Dev Only)",
+        "summary": "Creates a Firebase Auth user + Firestore doc with IPM_ADMIN role.",
+        "auth": "None (dev environment only)",
+        "complexity": "simple",
+        "source_file": "routers/dev.py",
+        "source_line": 70,
+        "description_long": (
+            "Development-only endpoint for bootstrapping the first IPM admin user. "
+            "Creates both a Firebase Auth account and a Firestore user document with "
+            "IPM_ADMIN role. Only available when ENVIRONMENT=development."
+        ),
+        "request_body": [
+            ("email", "EmailStr", True, "Admin email"),
+            ("password", "str", True, "Password (min 6 chars)"),
+            ("display_name", "str", True, "Display name"),
+        ],
+        "response_fields": [
+            ("user_id", "str", "Firebase Auth UID"),
+            ("email", "str", "Email"),
+            ("display_name", "str", "Name"),
+            ("role", "str", "'IPM_ADMIN'"),
+            ("message", "str", "Instructions for getting an ID token"),
+        ],
+        "response_status": 201,
+        "status_codes": {201: "Created", 403: "Not in development mode", 409: "Email exists", 500: "Failed"},
+        "path_params": [],
+        "query_params": [],
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# Build index for O(1) look-up
+# ---------------------------------------------------------------------------
+_INDEX: dict[str, dict[str, Any]] = {e["id"]: e for e in ENDPOINTS}
