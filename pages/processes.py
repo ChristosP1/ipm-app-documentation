@@ -374,14 +374,14 @@ with tab_access:
     st.code(
         """\
                       
-          PENDING ── accept ──► ACCEPTED
-            │                      │
-         decline                revoke                            
-            │                      │ 
-            ▼                      ▼
-         DECLINED               REVOKED
+          PENDING ── {accept} ──► ACCEPTED
+            │                        │
+        {decline}                 {revoke}                            
+            │                        │ 
+            ▼                        ▼
+         DECLINED                 REVOKED
 
-          PENDING  ── delete ──►  (removed)""",
+          PENDING  ── {delete} ──►  (removed)""",
         language="text",
     )
 
